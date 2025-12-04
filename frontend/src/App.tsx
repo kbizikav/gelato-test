@@ -184,7 +184,7 @@ const App = () => {
         owner: wallet.address,
         token: appConfig.token,
         spender: appConfig.target,
-        amountInput,
+        amount: parsedAmount,
         permitDeadline,
         chainId: appConfig.chainId,
       });

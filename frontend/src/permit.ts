@@ -1,4 +1,4 @@
-import { parseUnits, type Address, type Hex, type PublicClient, type WalletClient } from "viem";
+import { type Address, type Hex, type PublicClient, type WalletClient } from "viem";
 import { ERC20_PERMIT_ABI } from "./abi";
 
 export const PERMIT_TYPES = {
@@ -66,13 +66,12 @@ export const buildPermitSignature = async (params: {
   owner: Address;
   token: Address;
   spender: Address;
-  amountInput: string;
+  amount: bigint;
   permitDeadline: bigint;
   chainId: number;
 }): Promise<PermitSignatureResult> => {
-  const { walletClient, publicClient, owner, token, spender, amountInput, permitDeadline, chainId } = params;
+  const { walletClient, publicClient, owner, token, spender, amount, permitDeadline, chainId } = params;
   const meta = await readPermitMetadata(publicClient, token, owner);
-  const amount = parseUnits(amountInput, meta.decimals);
   const signature = await walletClient.signTypedData({
     account: owner,
     domain: {
