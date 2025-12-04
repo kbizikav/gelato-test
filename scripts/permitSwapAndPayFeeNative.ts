@@ -1,6 +1,7 @@
 import { GelatoRelay, type CallWithSyncFeeRequest } from "@gelatonetwork/relay-sdk";
-import { encodeFunctionData, type Abi, type Address } from "viem";
+import { encodeFunctionData, parseUnits, type Abi, type Address } from "viem";
 import {
+  NATIVE_TOKEN,
   buildPermitSignature,
   fetchAndReportStatus,
   getArgValue,
@@ -12,18 +13,31 @@ import {
 
 const PERMIT_SWAP_ABI = [
   {
-    name: "incrementWithPermitFeeCapped",
+    name: "permitSwapAndPayFeeNative",
     type: "function",
-    stateMutability: "nonpayable",
+    stateMutability: "payable",
     inputs: [
-      { name: "user", type: "address" },
-      { name: "token", type: "address" },
-      { name: "amount", type: "uint256" },
-      { name: "deadline", type: "uint256" },
-      { name: "v", type: "uint8" },
-      { name: "r", type: "bytes32" },
-      { name: "s", type: "bytes32" },
-      { name: "maxFee", type: "uint256" },
+      {
+        name: "p",
+        type: "tuple",
+        components: [
+          { name: "owner", type: "address" },
+          { name: "value", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+          { name: "v", type: "uint8" },
+          { name: "r", type: "bytes32" },
+          { name: "s", type: "bytes32" },
+        ],
+      },
+      {
+        name: "s",
+        type: "tuple",
+        components: [
+          { name: "minEthOut", type: "uint256" },
+          { name: "deadline", type: "uint256" },
+        ],
+      },
+      { name: "maxFeeEth", type: "uint256" },
     ],
     outputs: [],
   },
@@ -38,15 +52,12 @@ async function main() {
     throw new Error("Set PERMIT_TOKEN or USDC in .env");
   }
 
-  const feeToken = (process.env.FEE_TOKEN ?? token) as Address | undefined;
-  if (!feeToken) {
-    throw new Error("Set FEE_TOKEN or PERMIT_TOKEN/USDC in .env");
-  }
-
   const sponsorApiKey = requireEnv("GELATO_RELAY_API_KEY");
   const amountInput = process.env.AMOUNT ?? "1";
   const permitDeadline = BigInt(process.env.PERMIT_DEADLINE ?? Math.floor(Date.now() / 1000 + 60 * 30));
-  const gasLimit = BigInt(process.env.GAS_LIMIT ?? 400_000);
+  const swapDeadline = BigInt(process.env.SWAP_DEADLINE ?? Math.floor(Date.now() / 1000 + 60 * 20));
+  const swapMinEthOut = parseUnits(process.env.SWAP_MIN_ETH_OUT ?? "0", 18);
+  const gasLimit = BigInt(process.env.GAS_LIMIT ?? 800_000);
   const feeBufferBps = BigInt(process.env.FEE_BUFFER_BPS ?? "2000");
   const isHighPriority = process.env.GELATO_HIGH_PRIORITY === "true";
   const relayRetries = parseNumber(process.env.RELAY_RETRIES, 3);
@@ -72,32 +83,45 @@ async function main() {
     chainId,
   });
 
-  const estimatedFee = await relay.getEstimatedFee(chainId, feeToken, gasLimit, isHighPriority);
-  const maxFee = (estimatedFee * (10_000n + feeBufferBps)) / 10_000n;
+  // Estimate fee in native ETH
+  const estimatedFee = await relay.getEstimatedFee(chainId, NATIVE_TOKEN, gasLimit, isHighPriority);
+  const maxFeeEth = (estimatedFee * (10_000n + feeBufferBps)) / 10_000n;
 
   const data = encodeFunctionData({
     abi: PERMIT_SWAP_ABI,
-    functionName: "incrementWithPermitFeeCapped",
-    args: [account.address, token, permitSig.amount, permitDeadline, permitSig.v, permitSig.r, permitSig.s, maxFee],
+    functionName: "permitSwapAndPayFeeNative",
+    args: [
+      {
+        owner: account.address,
+        value: permitSig.amount,
+        deadline: permitDeadline,
+        v: permitSig.v,
+        r: permitSig.r,
+        s: permitSig.s,
+      },
+      { minEthOut: swapMinEthOut, deadline: swapDeadline },
+      maxFeeEth,
+    ],
   });
 
   const request: CallWithSyncFeeRequest = {
     chainId,
     target,
     data,
-    feeToken,
+    feeToken: NATIVE_TOKEN,
     isRelayContext: true,
   };
 
-  console.log("Submitting callWithSyncFee:", {
+  console.log("Submitting permitSwapAndPayFeeNative:", {
     chainId: chainId.toString(),
     target,
     token,
-    feeToken,
     amount: permitSig.amount.toString(),
     permitDeadline: permitDeadline.toString(),
+    swapMinEthOut: swapMinEthOut.toString(),
+    swapDeadline: swapDeadline.toString(),
     gasLimit: gasLimit.toString(),
-    maxFee: maxFee.toString(),
+    maxFeeEth: maxFeeEth.toString(),
   });
 
   const { taskId } = await retry(
