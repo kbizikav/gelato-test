@@ -237,3 +237,39 @@ export const parseNumber = (value: string | undefined, fallback: number): number
   const n = value === undefined ? Number.NaN : Number(value);
   return Number.isFinite(n) ? n : fallback;
 };
+
+const TERMINAL_STATES = new Set([
+  "ExecSuccess",
+  "ExecReverted",
+  "Cancelled",
+  "Blacklisted",
+  "NotFound",
+  "Reverted",
+  "CancelledByUser",
+]);
+
+const sleepMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const waitForTaskFinal = async (
+  relay: GelatoRelay,
+  taskId: string,
+  maxAttempts: number,
+  intervalMs: number
+): Promise<TransactionStatusResponse | undefined> => {
+  let lastStatus: TransactionStatusResponse | undefined;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      lastStatus = await relay.getTaskStatus(taskId);
+      printTaskStatus(lastStatus, taskId);
+      const state = (lastStatus as TransactionStatusResponse & Record<string, unknown>)?.taskState;
+      const txHash = (lastStatus as TransactionStatusResponse & Record<string, unknown>)?.transactionHash;
+      if (txHash || (state && TERMINAL_STATES.has(String(state)))) {
+        return lastStatus;
+      }
+    } catch (err) {
+      console.error(`Failed to fetch task status (attempt ${i + 1}/${maxAttempts})`, err);
+    }
+    await sleepMs(intervalMs);
+  }
+  return lastStatus;
+};

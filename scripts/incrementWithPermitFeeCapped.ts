@@ -2,12 +2,12 @@ import { GelatoRelay, type CallWithSyncFeeRequest } from "@gelatonetwork/relay-s
 import { encodeFunctionData, type Abi, type Address } from "viem";
 import {
   buildPermitSignature,
-  fetchAndReportStatus,
   getArgValue,
   makeClients,
   parseNumber,
   requireEnv,
   retry,
+  waitForTaskFinal,
 } from "./relayHelpers";
 
 const PERMIT_SWAP_ABI = [
@@ -51,13 +51,15 @@ async function main() {
   const isHighPriority = process.env.GELATO_HIGH_PRIORITY === "true";
   const relayRetries = parseNumber(process.env.RELAY_RETRIES, 3);
   const relayRetryDelayMs = parseNumber(process.env.RELAY_RETRY_DELAY_MS, 1500);
+  const statusMaxAttempts = parseNumber(process.env.STATUS_POLL_MAX_ATTEMPTS, 20);
+  const statusIntervalMs = parseNumber(process.env.STATUS_POLL_INTERVAL_MS, 5000);
 
   const taskIdFromArgs = getArgValue("--task") ?? process.env.TASK_ID;
   const relay = new GelatoRelay();
 
   if (taskIdFromArgs) {
     console.log(`Fetching status for taskId=${taskIdFromArgs}`);
-    await fetchAndReportStatus(relay, taskIdFromArgs);
+    await waitForTaskFinal(relay, taskIdFromArgs, statusMaxAttempts, statusIntervalMs);
     return;
   }
 
@@ -106,7 +108,7 @@ async function main() {
     relayRetryDelayMs
   );
   console.log(`Gelato task submitted. taskId=${taskId}`);
-  await fetchAndReportStatus(relay, taskId);
+  await waitForTaskFinal(relay, taskId, statusMaxAttempts, statusIntervalMs);
 }
 
 main().catch((err) => {
