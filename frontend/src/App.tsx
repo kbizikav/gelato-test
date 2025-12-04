@@ -48,7 +48,7 @@ const App = () => {
   const [error, setError] = useState<string | null>(null);
 
   const balanceText = useMemo(() => {
-    if (tokenBalance === null || tokenDecimals === null) return "—";
+    if (tokenBalance === null || tokenDecimals === null) return "0.00";
     return formatUnits(tokenBalance, tokenDecimals);
   }, [tokenBalance, tokenDecimals]);
 
@@ -163,8 +163,8 @@ const App = () => {
       setError("Amount must be greater than zero.");
       return;
     }
-    if (parsedAmount >= tokenBalance) {
-      setError("Amount must be smaller than your balance.");
+    if (parsedAmount > tokenBalance) {
+      setError("Insufficient balance.");
       return;
     }
 
@@ -246,106 +246,96 @@ const App = () => {
 
   return (
     <div className="shell">
-      <div className="header">
-        <div>
-          <p className="title">Permit Swap → Pay Fee (Gelato)</p>
-          <p className="subtitle">MetaMask signs permit, Gelato relays swap to {appConfig.chainId}.</p>
+      <header className="header">
+        <div className="header-content">
+          <h1 className="title">Gelato Gasless Swap</h1>
+          <p className="subtitle">Swap tokens without paying ETH for gas</p>
         </div>
-        <button className="cta" onClick={connectWallet}>
-          {wallet ? `Connected ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}` : "Connect MetaMask"}
+        <button className="connect-btn" onClick={connectWallet}>
+          {wallet ? (
+            <>
+              <span className="status-dot"></span>
+              {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+            </>
+          ) : (
+            "Connect Wallet"
+          )}
         </button>
-      </div>
+      </header>
 
-      <div className="grid">
-        <div className="card">
-          <h3>Wallet & Token</h3>
-          <p className="stat">
-            <strong>Chain:</strong> {wallet ? wallet.chainId : "—"}{" "}
-            {wallet?.chainId === base.id ? "(Base)" : wallet ? "(wrong network?)" : ""}
-          </p>
-          <p className="stat">
-            <strong>Token:</strong> {appConfig.token}
-          </p>
-          <p className="stat">
-            <strong>Balance:</strong> {balanceText} {tokenDecimals !== null ? `(${tokenDecimals} decimals)` : ""}
-          </p>
-          <p className="stat">
-            <strong>Permit target:</strong> {appConfig.target}
-          </p>
-          <p className="stat">
-            <strong>Relay API key:</strong>{" "}
-            {appConfig.relayApiKey ? (
-              <span className="badge">set</span>
-            ) : (
-              <span className="badge">missing</span>
-            )}
-          </p>
-        </div>
+      <main className="main-content">
+        <div className="card swap-card">
+          {!appConfig.relayApiKey && (
+            <div className="banner error">
+              Configuration Error: Relay API Key is missing.
+            </div>
+          )}
 
-        <div className="card">
-          <h3>Swap via Permit</h3>
-          <form onSubmit={handleSubmit}>
-            <div className="input-row">
-              <label htmlFor="amount">Amount (must be below balance)</label>
-              <input
-                id="amount"
-                placeholder="e.g. 100.0"
-                value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
-                inputMode="decimal"
-                autoComplete="off"
-              />
-              <div className="muted">
-                Permit deadline: {appConfig.permitDeadlineSeconds / 60} min · Swap deadline:{" "}
-                {appConfig.swapDeadlineSeconds / 60} min
+          <form onSubmit={handleSubmit} className="swap-form">
+            <div className="input-group">
+              <div className="input-header">
+                <label htmlFor="amount">Pay</label>
+                <span className="balance">
+                  Balance: <span className="balance-value">{balanceText}</span>
+                </span>
+              </div>
+              <div className="input-wrapper">
+                <input
+                  id="amount"
+                  placeholder="0.0"
+                  value={amountInput}
+                  onChange={(e) => setAmountInput(e.target.value)}
+                  inputMode="decimal"
+                  autoComplete="off"
+                  className="amount-input"
+                />
               </div>
             </div>
 
-            <div className="grid" style={{ gap: "10px" }}>
-              <div className="pill">Gas limit: {appConfig.gasLimit.toString()}</div>
-              <div className="pill">Fee buffer: {appConfig.feeBufferBps.toString()} bps</div>
-              <div className="pill">Min ETH out: {appConfig.swapMinEthOut.toString()} wei</div>
-            </div>
+            {error && <div className="error-message">{error}</div>}
 
-            {error && <div className="error">{error}</div>}
-
-            <button className="cta" type="submit" disabled={isSubmitting || !wallet}>
-              {isSubmitting ? "Submitting…" : "Sign permit & relay swap"}
+            <button 
+              className="cta-button" 
+              type="submit" 
+              disabled={isSubmitting || !wallet}
+            >
+              {isSubmitting ? "Processing..." : "Swap"}
             </button>
           </form>
-        </div>
-      </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <h3>Status</h3>
-        {task ? (
-          <>
-            <p className="stat">
-              <strong>Task ID:</strong> {task.id}
-            </p>
-            <p className="stat">
-              <strong>State:</strong> {task.status ?? "pending"}
-            </p>
-            {task.txHash && (
-              <p className="stat">
-                <strong>Tx:</strong>{" "}
-                {explorerHref ? (
-                  <a href={explorerHref} target="_blank" rel="noreferrer">
-                    {task.txHash}
-                  </a>
-                ) : (
-                  task.txHash
-                )}
-              </p>
-            )}
-          </>
-        ) : (
-          <p className="muted">Submit to see relay task updates.</p>
-        )}
-        <div className="log">
-          {logs.length === 0 ? <span className="muted">Waiting…</span> : logs.map((line, idx) => <div key={idx}>{line}</div>)}
+          {task && (
+            <div className="task-status-container">
+               <div className="task-row">
+                 <span className="label">Status</span>
+                 <span className="value">{task.status ?? "Pending"}</span>
+               </div>
+               {task.txHash && (
+                 <div className="task-row">
+                    <span className="label">Transaction</span>
+                    {explorerHref ? (
+                      <a href={explorerHref} target="_blank" rel="noreferrer" className="explorer-link">
+                        View on Explorer ↗
+                      </a>
+                    ) : (
+                      <span className="value truncated">{task.txHash}</span>
+                    )}
+                 </div>
+               )}
+            </div>
+          )}
         </div>
-      </div>
+        
+        {logs.length > 0 && (
+            <details className="logs-details">
+                <summary>Debug Logs</summary>
+                <div className="logs-container">
+                    {logs.map((line, idx) => (
+                        <div key={idx} className="log-line">{line}</div>
+                    ))}
+                </div>
+            </details>
+        )}
+      </main>
     </div>
   );
 };
