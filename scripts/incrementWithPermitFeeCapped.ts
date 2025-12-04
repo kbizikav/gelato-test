@@ -11,6 +11,7 @@ import {
   type Hex,
 } from "viem";
 import { base } from "viem/chains";
+import type { TransactionStatusResponse } from "@gelatonetwork/relay-sdk";
 import { privateKeyToAccount } from "viem/accounts";
 
 const NATIVE_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
@@ -106,6 +107,56 @@ const splitSignature = (signature: Hex): { v: number; r: Hex; s: Hex } => {
   return { v, r, s };
 };
 
+const getArgValue = (flag: string): string | undefined => {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1 || idx + 1 >= process.argv.length) return undefined;
+  return process.argv[idx + 1];
+};
+
+const printTaskStatus = (status: TransactionStatusResponse | undefined, taskId: string) => {
+  if (!status) {
+    console.log(`No status yet for taskId=${taskId}`);
+    return;
+  }
+
+  const {
+    chainId,
+    taskState,
+    transactionHash,
+    executionDate,
+    creationDate,
+    lastCheckDate,
+    lastCheckMessage,
+  } = status as TransactionStatusResponse & Record<string, unknown>;
+
+  console.log("Task status", {
+    taskId,
+    chainId,
+    taskState,
+    transactionHash,
+    creationDate,
+    executionDate,
+    lastCheckDate,
+    lastCheckMessage,
+  });
+
+  if (transactionHash) {
+    console.log(`Explorer tx: https://basescan.org/tx/${transactionHash}`);
+  }
+  if (lastCheckMessage) {
+    console.log(`Last check message: ${lastCheckMessage}`);
+  }
+};
+
+const fetchAndReportStatus = async (relay: GelatoRelay, taskId: string) => {
+  try {
+    const status = await relay.getTaskStatus(taskId);
+    printTaskStatus(status, taskId);
+  } catch (err) {
+    console.error(`Failed to fetch task status for ${taskId}`, err);
+  }
+};
+
 async function main() {
   const rpcUrl =
     process.env.RPC_URL ?? (process.env.ALCHEMY_KEY ? `https://base-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_KEY}` : undefined);
@@ -117,6 +168,12 @@ async function main() {
   const token = (process.env.PERMIT_TOKEN ?? process.env.USDC) as Address | undefined;
   if (!token) {
     throw new Error("Set PERMIT_TOKEN or USDC in .env");
+  }
+
+  // Fee token (ERC20) defaults to USDC/PERMIT_TOKEN
+  const feeToken = (process.env.FEE_TOKEN ?? token) as Address | undefined;
+  if (!feeToken) {
+    throw new Error("Set FEE_TOKEN or PERMIT_TOKEN/USDC in .env");
   }
 
   const privateKey = requireEnv("PRIVATE_KEY") as `0x${string}`;
@@ -131,6 +188,16 @@ async function main() {
   const account = privateKeyToAccount(privateKey);
   const publicClient = createPublicClient({ chain: DEFAULT_CHAIN, transport: http(rpcUrl) });
   const walletClient = createWalletClient({ account, chain: DEFAULT_CHAIN, transport: http(rpcUrl) });
+
+  const taskIdFromArgs = getArgValue("--task") ?? process.env.TASK_ID;
+  const relay = new GelatoRelay();
+
+  // Status-only mode
+  if (taskIdFromArgs) {
+    console.log(`Fetching status for taskId=${taskIdFromArgs}`);
+    await fetchAndReportStatus(relay, taskIdFromArgs);
+    return;
+  }
 
   const [tokenName, tokenVersion, decimals, nonce] = await Promise.all([
     publicClient.readContract({ address: token, abi: ERC20_PERMIT_ABI, functionName: "name" }),
@@ -164,8 +231,8 @@ async function main() {
 
   const permitSig = splitSignature(signature);
 
-  const relay = new GelatoRelay();
-  const estimatedFee = await relay.getEstimatedFee(chainId, NATIVE_TOKEN, gasLimit, isHighPriority);
+  // Estimate fee in ERC20 (USDC)
+  const estimatedFee = await relay.getEstimatedFee(chainId, feeToken, gasLimit, isHighPriority);
   const maxFee = (estimatedFee * (10_000n + feeBufferBps)) / 10_000n;
 
   const data = encodeFunctionData({
@@ -178,7 +245,7 @@ async function main() {
     chainId,
     target,
     data,
-    feeToken: NATIVE_TOKEN,
+    feeToken,
     isRelayContext: true,
   };
 
@@ -186,6 +253,7 @@ async function main() {
     chainId: chainId.toString(),
     target,
     token,
+    feeToken,
     amount: amount.toString(),
     permitDeadline: permitDeadline.toString(),
     gasLimit: gasLimit.toString(),
@@ -194,6 +262,7 @@ async function main() {
 
   const { taskId } = await relay.callWithSyncFee(request, { gasLimit }, sponsorApiKey);
   console.log(`Gelato task submitted. taskId=${taskId}`);
+  await fetchAndReportStatus(relay, taskId);
 }
 
 main().catch((err) => {
