@@ -10,6 +10,7 @@
 [submodule "lib/universal-router"]
 	path = lib/universal-router
 	url = https://github.com/uniswap/universal-router
+	branch = main
 [submodule "lib/permit2"]
 	path = lib/permit2
 	url = https://github.com/uniswap/permit2
